@@ -104,7 +104,7 @@
         let initialPath = null;
         let markers = [];
 
-        document.getElementById('calcBtn').addEventListener('click', function() {
+        document.getElementById('calcBtn').addEventListener('click', async function() {
             if (routingControl) {
                 map.removeControl(routingControl);
             }
@@ -115,67 +115,68 @@
             markers.forEach(marker => map.removeLayer(marker));
             markers = [];
 
-            const waypoints = pointsData.map(point => {
+            // 1. Dibujamos los marcadores iniciales sin conectar
+            pointsData.forEach(point => {
                 const marker = L.marker([point.lat, point.lng])
                     .bindPopup(`<strong style="color:#0f172a;">${point.name}</strong>`)
                     .addTo(map);
                 markers.push(marker);
-                return L.latLng(point.lat, point.lng);
             });
 
-            // Trazamos de inmediato una línea conectando los puntos (en caso de que OSRM tarde o falle)
-            initialPath = L.polyline(waypoints, {
-                color: '#38bdf8', 
-                weight: 4, 
-                dashArray: '10, 10', 
-                className: 'animated-route'
+            // 2. Trazamos línea de fallback temporal para evidenciar el intento de cálculo
+            const tempWaypoints = pointsData.map(p => L.latLng(p.lat, p.lng));
+            initialPath = L.polyline(tempWaypoints, {
+                color: '#38bdf8', weight: 4, dashArray: '10, 10'
             }).addTo(map);
-            
             map.fitBounds(initialPath.getBounds(), { padding: [50, 50] });
 
-            // Usamos un servidor OSRM alternativo más confiable para trazar calles reales
-            routingControl = L.Routing.control({
-                waypoints: waypoints,
-                router: L.Routing.osrmv1({
-                    serviceUrl: 'https://routing.openstreetmap.de/routed-car/route/v1'
-                }),
-                routeWhileDragging: false,
-                addWaypoints: false,
-                fitSelectedRoutes: true,
-                show: false, // Ocultamos el panel de texto
-                lineOptions: {
-                    styles: [
-                        {color: '#10b981', opacity: 0.9, weight: 6, className: 'animated-route'}
-                    ]
-                },
-                createMarker: function() { return null; }
-            }).on('routesfound', function() {
-                // Si trazó correctamente por las calles, removemos la línea recta de respaldo
-                if (initialPath) {
-                    map.removeLayer(initialPath);
+            try {
+                // 3. OPTIMIZACIÓN REAL (TSP - Traveling Salesperson Problem)
+                // Utilizamos el servicio "trip" de OSRM para reordenar los puntos y encontrar la ruta más rápida
+                const coordsString = pointsData.map(p => `${p.lng},${p.lat}`).join(';');
+                const tripUrl = `https://routing.openstreetmap.de/routed-car/trip/v1/driving/${coordsString}?source=first&roundtrip=false`;
+                
+                const response = await fetch(tripUrl);
+                const data = await response.json();
+
+                let optimizedPoints = [...pointsData];
+
+                if (data.code === 'Ok' && data.waypoints) {
+                    // Ordenamos nuestros puntos basados en el waypoint_index óptimo calculado por OSRM
+                    const ordered = new Array(pointsData.length);
+                    data.waypoints.forEach((wp, index) => {
+                        ordered[wp.waypoint_index] = pointsData[index];
+                    });
+                    optimizedPoints = ordered;
+                } else {
+                    console.warn('No se pudo optimizar la ruta con OSRM Trip, se mantendrá el orden original.');
                 }
-            }).on('routingerror', function(e) {
-                console.warn('Fallo el servidor OSRM, manteniendo línea de respaldo.', e);
-            }).addTo(map);
-            
-            // Forzamos un estilo animado en CSS
-            const styleId = 'route-animation-style';
-            if (!document.getElementById(styleId)) {
-                const style = document.createElement('style');
-                style.id = styleId;
-                style.innerHTML = `
-                    .animated-route {
-                        stroke-dasharray: 1000;
-                        stroke-dashoffset: 1000;
-                        animation: dash 3s ease-out forwards;
-                    }
-                    @keyframes dash {
-                        to {
-                            stroke-dashoffset: 0;
-                        }
-                    }
-                `;
-                document.head.appendChild(style);
+
+                const optimizedWaypoints = optimizedPoints.map(p => L.latLng(p.lat, p.lng));
+
+                // 4. Trazar la ruta "real" optimizada por calles usando Leaflet Routing Machine
+                routingControl = L.Routing.control({
+                    waypoints: optimizedWaypoints,
+                    router: L.Routing.osrmv1({
+                        serviceUrl: 'https://routing.openstreetmap.de/routed-car/route/v1'
+                    }),
+                    routeWhileDragging: false,
+                    addWaypoints: false,
+                    fitSelectedRoutes: true,
+                    show: false, // Ocultamos el panel de texto
+                    lineOptions: {
+                        styles: [{color: '#10b981', opacity: 0.9, weight: 6}]
+                    },
+                    createMarker: function() { return null; }
+                }).on('routesfound', function() {
+                    // Removemos la línea temporal si se trazaron las calles exitosamente
+                    if (initialPath) map.removeLayer(initialPath);
+                }).on('routingerror', function(e) {
+                    console.warn('Fallo el trazado de calles por OSRM, manteniendo línea de respaldo.', e);
+                }).addTo(map);
+
+            } catch (error) {
+                console.error("Error al optimizar u obtener la ruta:", error);
             }
         });
     </script>
