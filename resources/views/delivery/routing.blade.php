@@ -46,6 +46,7 @@
             font-weight: 600;
             background: linear-gradient(135deg, #38bdf8, #818cf8);
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
             text-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
@@ -71,6 +72,42 @@
             transform: translateY(0);
             box-shadow: 0 2px 4px -1px rgba(0, 0, 0, 0.2);
         }
+        .loading-overlay {
+            display: none;
+            position: absolute;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 23, 42, 0.9);
+            padding: 12px 24px;
+            border-radius: 50px;
+            border: 1px solid #38bdf8;
+            color: white;
+            z-index: 2000;
+            font-size: 0.9rem;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
+        }
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top: 3px solid #38bdf8;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .badge-demo {
+            background: #f59e0b;
+            color: #000;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            margin-left: 8px;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -78,20 +115,25 @@
     <div id="map"></div>
 
     <div class="floating-panel">
-        <h2>Optimizador de Rutas San Gil</h2>
+        <h2>Optimizador de Rutas <span id="demoBadge" class="badge-demo">MODO DEMO</span></h2>
+        <p style="font-size: 0.85rem; color: #94a3b8; margin-top: -15px; margin-bottom: 20px;">San Gil, Santander</p>
         <button id="calcBtn" class="btn-calculate">Calcular Ruta Óptima</button>
+    </div>
+
+    <div id="loading" class="loading-overlay">
+        <div class="spinner"></div>
+        <span>Calculando ruta inteligente...</span>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
     <script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
 
+    <script id="points-data" type="application/json">
+        {!! json_encode($points) !!}
+    </script>
     <script>
-        const pointsData = @json($points);
-        
-        const map = L.map('map', {
-            zoomControl: false
-        }).setView([6.5515, -73.1330], 15);
-
+        const pointsData = JSON.parse(document.getElementById('points-data').textContent);
+        const map = L.map('map', { zoomControl: false }).setView([6.5515, -73.1330], 15);
         L.control.zoom({ position: 'bottomright' }).addTo(map);
 
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
@@ -100,83 +142,55 @@
             maxZoom: 20
         }).addTo(map);
 
-        let routingControl = null;
-        let initialPath = null;
-        let markers = [];
+        let activeLayers = [];
+
+        function decode(str) {
+            var index = 0, lat = 0, lng = 0, coordinates = [], shift = 0, result = 0, byte = null, latitude_change, longitude_change, factor = 1e5;
+            while (index < str.length) {
+                byte = null; shift = 0; result = 0;
+                do { byte = str.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20);
+                latitude_change = ((result & 1) ? ~(result >> 1) : (result >> 1)); lat += latitude_change;
+                byte = null; shift = 0; result = 0;
+                do { byte = str.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20);
+                longitude_change = ((result & 1) ? ~(result >> 1) : (result >> 1)); lng += longitude_change;
+                coordinates.push([lat / factor, lng / factor]);
+            }
+            return coordinates;
+        }
 
         document.getElementById('calcBtn').addEventListener('click', async function() {
-            if (routingControl) {
-                map.removeControl(routingControl);
-            }
-            if (initialPath) {
-                map.removeLayer(initialPath);
-            }
+            activeLayers.forEach(l => map.removeLayer(l));
+            activeLayers = [];
             
-            markers.forEach(marker => map.removeLayer(marker));
-            markers = [];
-
-            // 1. Dibujamos los marcadores iniciales sin conectar
-            pointsData.forEach(point => {
-                const marker = L.marker([point.lat, point.lng])
-                    .bindPopup(`<strong style="color:#0f172a;">${point.name}</strong>`)
-                    .addTo(map);
-                markers.push(marker);
+            const pointsList = [...pointsData];
+            pointsList.forEach(p => {
+                const m = L.marker([p.lat, p.lng]).bindPopup(`<strong>${p.name}</strong>`).addTo(map);
+                activeLayers.push(m);
             });
 
-            // 2. Trazamos línea de fallback temporal para evidenciar el intento de cálculo
-            const tempWaypoints = pointsData.map(p => L.latLng(p.lat, p.lng));
-            initialPath = L.polyline(tempWaypoints, {
-                color: '#38bdf8', weight: 4, dashArray: '10, 10'
-            }).addTo(map);
-            map.fitBounds(initialPath.getBounds(), { padding: [50, 50] });
-
+            document.getElementById('loading').style.display = 'flex';
+            
+            let geometry = null;
             try {
-                // 3. OPTIMIZACIÓN REAL (TSP - Traveling Salesperson Problem)
-                // Utilizamos el servicio "trip" de OSRM para reordenar los puntos y encontrar la ruta más rápida
-                const coordsString = pointsData.map(p => `${p.lng},${p.lat}`).join(';');
-                const tripUrl = `https://routing.openstreetmap.de/routed-car/trip/v1/driving/${coordsString}?source=first&roundtrip=false`;
-                
-                const response = await fetch(tripUrl);
-                const data = await response.json();
-
-                let optimizedPoints = [...pointsData];
-
-                if (data.code === 'Ok' && data.waypoints) {
-                    // Ordenamos nuestros puntos basados en el waypoint_index óptimo calculado por OSRM
-                    const ordered = new Array(pointsData.length);
-                    data.waypoints.forEach((wp, index) => {
-                        ordered[wp.waypoint_index] = pointsData[index];
-                    });
-                    optimizedPoints = ordered;
-                } else {
-                    console.warn('No se pudo optimizar la ruta con OSRM Trip, se mantendrá el orden original.');
+                const res = await fetch(`/api/optimize?coords=${encodeURIComponent(pointsList.map(p => `${p.lng},${p.lat}`).join(';'))}`);
+                const data = await res.json();
+                if (data.code === 'Ok' && data.trips && data.trips[0].geometry) {
+                    geometry = data.trips[0].geometry;
+                } else { throw new Error(); }
+            } catch (e) {
+                try {
+                    const fallback = await fetch('/fallback_route.json');
+                    const d = await fallback.json();
+                    geometry = d.trips[0].geometry;
+                    document.getElementById('demoBadge').style.display = 'inline-block';
+                } catch (err) {}
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+                if (geometry) {
+                    const line = L.polyline(decode(geometry), { color: '#3b82f6', weight: 6, opacity: 1, lineJoin: 'round' }).addTo(map);
+                    activeLayers.push(line);
+                    map.fitBounds(line.getBounds(), { padding: [80, 80] });
                 }
-
-                const optimizedWaypoints = optimizedPoints.map(p => L.latLng(p.lat, p.lng));
-
-                // 4. Trazar la ruta "real" optimizada por calles usando Leaflet Routing Machine
-                routingControl = L.Routing.control({
-                    waypoints: optimizedWaypoints,
-                    router: L.Routing.osrmv1({
-                        serviceUrl: 'https://routing.openstreetmap.de/routed-car/route/v1'
-                    }),
-                    routeWhileDragging: false,
-                    addWaypoints: false,
-                    fitSelectedRoutes: true,
-                    show: false, // Ocultamos el panel de texto
-                    lineOptions: {
-                        styles: [{color: '#10b981', opacity: 0.9, weight: 6}]
-                    },
-                    createMarker: function() { return null; }
-                }).on('routesfound', function() {
-                    // Removemos la línea temporal si se trazaron las calles exitosamente
-                    if (initialPath) map.removeLayer(initialPath);
-                }).on('routingerror', function(e) {
-                    console.warn('Fallo el trazado de calles por OSRM, manteniendo línea de respaldo.', e);
-                }).addTo(map);
-
-            } catch (error) {
-                console.error("Error al optimizar u obtener la ruta:", error);
             }
         });
     </script>

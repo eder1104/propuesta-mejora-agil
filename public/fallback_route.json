@@ -1,0 +1,18 @@
+{
+  "code": "Ok",
+  "trips": [
+    {
+      "geometry": "kj}f@rnj}LeDiAqCEYa@rCwBvB[hIuFiHe@_DZyBo@_HpCoUbQcBo@L_FuAq@gCrHcEzGuGlKcDgBwJcFnDeHyCwAl@uBm@tBxCvAcF`KvSrKbJoNfFaKxBp@nUcQ~GqCxBn@nC[xHd@iItFwBZsCvBX`@pCDdDhA",
+      "weight": 664.3,
+      "duration": 664.3,
+      "distance": 6385.3
+    }
+  ],
+  "waypoints": [
+    { "waypoint_index": 0, "lat": 6.5450, "lng": -73.1310, "name": "Terminal de Transportes" },
+    { "waypoint_index": 1, "lat": 6.5545, "lng": -73.1335, "name": "Plaza de Banderas" },
+    { "waypoint_index": 2, "lat": 6.5535, "lng": -73.1340, "name": "C.C. Camino Real" },
+    { "waypoint_index": 3, "lat": 6.5565, "lng": -73.1350, "name": "Parque El Gallineral" },
+    { "waypoint_index": 4, "lat": 6.5580, "lng": -73.1315, "name": "Hospital" }
+  ]
+}

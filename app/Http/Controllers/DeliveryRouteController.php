@@ -24,6 +24,24 @@ class DeliveryRouteController extends Controller
         
         $processedPoints = $routingService->executeRouting($points);
 
-        return view('delivery.routing', ['points' => $processedPoints]);
+        return view('delivery.routing', compact('points'));
+    }
+
+    public function optimize(\Illuminate\Http\Request $request)
+    {
+        $coords = $request->query('coords');
+        if (!$coords) return response()->json(['error' => 'No coords provided'], 400);
+
+        $url = "https://routing.openstreetmap.de/routed-car/trip/v1/driving/{$coords}?source=first&roundtrip=false";
+        
+        try {
+            $response = \Illuminate\Support\Facades\Http::timeout(10)->get($url);
+            if ($response->successful()) {
+                return response($response->body())->header('Content-Type', 'application/json');
+            }
+            return response()->json(['code' => 'ServiceUnavailable', 'error' => 'OSRM returned status ' . $response->status()], 200);
+        } catch (\Exception $e) {
+            return response()->json(['code' => 'Error', 'details' => $e->getMessage()], 200);
+        }
     }
 }
