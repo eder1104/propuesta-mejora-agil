@@ -101,11 +101,15 @@
         }).addTo(map);
 
         let routingControl = null;
+        let initialPath = null;
         let markers = [];
 
         document.getElementById('calcBtn').addEventListener('click', function() {
             if (routingControl) {
                 map.removeControl(routingControl);
+            }
+            if (initialPath) {
+                map.removeLayer(initialPath);
             }
             
             markers.forEach(marker => map.removeLayer(marker));
@@ -119,17 +123,60 @@
                 return L.latLng(point.lat, point.lng);
             });
 
+            // Trazamos de inmediato una línea conectando los puntos (en caso de que OSRM tarde o falle)
+            initialPath = L.polyline(waypoints, {
+                color: '#38bdf8', 
+                weight: 4, 
+                dashArray: '10, 10', 
+                className: 'animated-route'
+            }).addTo(map);
+            
+            map.fitBounds(initialPath.getBounds(), { padding: [50, 50] });
+
+            // Usamos un servidor OSRM alternativo más confiable para trazar calles reales
             routingControl = L.Routing.control({
                 waypoints: waypoints,
+                router: L.Routing.osrmv1({
+                    serviceUrl: 'https://routing.openstreetmap.de/routed-car/route/v1'
+                }),
                 routeWhileDragging: false,
                 addWaypoints: false,
                 fitSelectedRoutes: true,
-                show: false,
+                show: false, // Ocultamos el panel de texto
                 lineOptions: {
-                    styles: [{color: '#38bdf8', opacity: 0.8, weight: 5}]
+                    styles: [
+                        {color: '#10b981', opacity: 0.9, weight: 6, className: 'animated-route'}
+                    ]
                 },
                 createMarker: function() { return null; }
+            }).on('routesfound', function() {
+                // Si trazó correctamente por las calles, removemos la línea recta de respaldo
+                if (initialPath) {
+                    map.removeLayer(initialPath);
+                }
+            }).on('routingerror', function(e) {
+                console.warn('Fallo el servidor OSRM, manteniendo línea de respaldo.', e);
             }).addTo(map);
+            
+            // Forzamos un estilo animado en CSS
+            const styleId = 'route-animation-style';
+            if (!document.getElementById(styleId)) {
+                const style = document.createElement('style');
+                style.id = styleId;
+                style.innerHTML = `
+                    .animated-route {
+                        stroke-dasharray: 1000;
+                        stroke-dashoffset: 1000;
+                        animation: dash 3s ease-out forwards;
+                    }
+                    @keyframes dash {
+                        to {
+                            stroke-dashoffset: 0;
+                        }
+                    }
+                `;
+                document.head.appendChild(style);
+            }
         });
     </script>
 </body>
